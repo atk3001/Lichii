@@ -91,6 +91,8 @@ struct StorageInfo {
     bool tables_seen{};
     size_t table_budget{};
     size_t table_used{};
+    /// Table candidates the budget could not take, see the eviction in CollectStorageBuffers
+    size_t table_dropped{};
     /// The storage buffers the pass without table entries bound; bound again, they take nothing
     /// from table_budget, which they were left out of.
     StorageBufferSet counted;
@@ -1394,6 +1396,7 @@ void CollectStorageBuffers(IR::Block& block, IR::Inst& inst, StorageInfo& info, 
                         (takes_binding(candidate) ? 1U : 0U) +
                         (candidate.indirect != ~0U && takes_binding(holder) ? 1U : 0U)};
                     if (info.table_used + added > info.table_budget) {
+                        ++info.table_dropped;
                         continue;
                     }
                     info.table_used += added;
@@ -1656,6 +1659,17 @@ void GlobalMemoryToStorageBufferPass(Environment& env, IR::Program& program,
             // Never more storage buffers than a stage binds: without the table entries, then.
             info = std::move(with_tables);
         }
+    }
+    // Never evict a storage binding silently: evicted pools produce empty consumer output
+    // (OoT Hyrule Field lost its grass this way).
+    if (info.table_dropped > 0) {
+        LOG_WARNING(Shader,
+                    "Storage binding budget exceeded: program has {} storage bindings bound "
+                    "at the limit of {} (native {}, stage {}, start {:x}); {} binding "
+                    "requests were evicted and their consumers see empty data",
+                    info.set.size(), max_ssbos, env.IsNativeProgram(),
+                    static_cast<int>(env.ShaderStage()), env.StartAddress(),
+                    info.table_dropped);
     }
     program.info.native_global_bounds |= info.native_runtime_bounds;
     for (const StorageBufferAddr& storage_buffer : info.set) {
