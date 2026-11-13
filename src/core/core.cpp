@@ -20,6 +20,7 @@
 #include "common/adpf.h"
 #include "common/settings.h"
 #include "common/settings_enums.h"
+#include "common/shutdown_progress.h"
 #include "common/string_util.h"
 #include "core/arm/exclusive_monitor.h"
 #include "core/core.h"
@@ -397,6 +398,21 @@ struct System::Impl {
         return SystemResultStatus::Success;
     }
 
+    SystemResultStatus InitializeForGpuReplay(System& system, Frontend::EmuWindow& emu_window,
+                                              u64 program_id) {
+        if (const auto result = InitializeKernel(system); result != SystemResultStatus::Success) {
+            return result;
+        }
+        host1x_core.emplace(system);
+        VideoCore::CreateGPU(gpu_core, emu_window, system);
+        if (!gpu_core) {
+            return SystemResultStatus::ErrorVideoCore;
+        }
+        is_powered_on = true;
+        perf_stats.emplace(program_id);
+        return SystemResultStatus::Success;
+    }
+
     SystemResultStatus SetupForApplicationProcess(System& system, Frontend::EmuWindow& emu_window) {
         host1x_core.emplace(system);
         VideoCore::CreateGPU(gpu_core, emu_window, system);
@@ -605,16 +621,28 @@ struct System::Impl {
         core_timing.SyncPause(false);
         Network::CancelPendingSocketOperations();
         kernel.SuspendEmulation(true);
+        if (service_manager) {
+            // Services on host threads that still wait for one on the guest cores give up (after
+            // a close during the boot shader load, the guest cores never started).
+            service_manager->Close();
+        }
         kernel.CloseServices();
+        applet_manager.DropPendingProcess();
         kernel.ShutdownCores();
+        // Each step done tells the frontend the teardown still moves (see
+        // Common::ShutdownProgress); the GPU's (pipeline caches) reports its own steps.
+        Common::NoteShutdownProgress();
         services.reset();
         service_manager.reset();
         fs_controller.Reset();
         cheat_engine.reset();
         core_timing.ClearPendingEvents();
         app_loader.reset();
+        Common::NoteShutdownProgress();
         audio_core.reset();
+        Common::NoteShutdownProgress();
         gpu_core.reset();
+        Common::NoteShutdownProgress();
         host1x_core.reset();
         perf_stats.reset();
         cpu_manager.Shutdown();
@@ -800,6 +828,11 @@ bool System::GetNVDECActive() {
 
 void System::InitializeDebugger() {
     impl->InitializeDebugger(*this, Settings::values.gdbstub_port.GetValue());
+}
+
+SystemResultStatus System::InitializeForGpuReplay(Frontend::EmuWindow& emu_window,
+                                                  u64 program_id) {
+    return impl->InitializeForGpuReplay(*this, emu_window, program_id);
 }
 
 SystemResultStatus System::Load(Frontend::EmuWindow& emu_window, const std::string& filepath,

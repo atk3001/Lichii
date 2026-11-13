@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
@@ -33,6 +32,10 @@ namespace VideoCommon {
 class GpuSplit;
 }
 
+namespace VideoCommon::GpuTrace {
+struct StateAccess;
+}
+
 namespace Tegra {
 class MemoryManager;
 }
@@ -59,6 +62,8 @@ extern std::atomic<u32> g_nx2_trace_draws_after_upscale;
     (offsetof(Tegra::Engines::KeplerCompute::LaunchParams, field_name) / sizeof(u32))
 
 class KeplerCompute final : public EngineInterface {
+    friend struct ::VideoCommon::GpuTrace::StateAccess;
+
 public:
     explicit KeplerCompute(MemoryManager& memory_manager);
     ~KeplerCompute();
